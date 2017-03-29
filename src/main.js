@@ -11,8 +11,8 @@ var markers = [];
 var settings = {
   minMarkersPerGrid: 1,
   maxMarkersPerGrid: 1,
-  markersResolution: 2,
-  gridResolution: 40,
+  //markersResolution: 2,
+  gridResolution: 80,
   agentRadius: 0.5,
   numAgents: 20,
   displayMarkers: true
@@ -33,7 +33,8 @@ var Agent = function(pos, vel, tgt) {
   return {
     position: new THREE.Vector3(pos.x, pos.y, pos.z),
     velocity: new THREE.Vector3(vel.x, vel.y, vel.z),
-    target: new THREE.Vector3(tgt.x, tgt.y, tgt.z)
+    target: new THREE.Vector3(tgt.x, tgt.y, tgt.z),
+    markers: []
   }
 }
 
@@ -67,11 +68,11 @@ function generateGrid() {
         square.markers.push(marker);
         markers.push(marker);
       }
-      //console.log(square);
+
       row.push(square);
     }
     grid.push(row);
-    //console.log(row);
+
   }
 }
 
@@ -128,32 +129,54 @@ function generateAgentsRows(scene) {
 
 
 
-function getWeightedVel(pos, mpos, tgt) {
+function setWeightedVel(agent) {
+  var pos = agent.position;
+  var tgt = agent.target;
   var toTarget = (new THREE.Vector3(0, 0, 0)).subVectors(tgt, pos);
-
-  var toMark = (new THREE.Vector3(0, 0, 0)).subVectors(mpos, pos);
-  if (toTarget.length < toMark.length) {
-    return new THREE.Vector3(0, 0, 0);
+  if (toTarget.length() < 0.01) {
+    return;
   }
 
-  toTarget = toTarget.normalize();
-  toMark = toMark.normalize();
-  var alignment = toTarget.dot(toMark) * 2 + 1.0;
-  //alignment = 1;
-  var r2 = settings.agentRadius * settings.agentRadius;
-  var d = pos.distanceToSquared(mpos);
+  // sum and record all weights
+  var totalWeight = 0.0;
+  var weights = [];
+  var displacements = [];
+  for (var m = 0; m < agent.markers.length; m++) {
+    var mpos = agent.markers[m].pos;
+    var toMark = (new THREE.Vector3(0, 0, 0)).subVectors(mpos, pos);
+    var wf = 1.0 / (1.0 + toMark.length());
+    
+    wf = wf * (1.0 + toMark.dot(toTarget) / toMark.length() / toTarget.length());
+    totalWeight += wf;
+    weights.push(wf);
+    displacements.push(toMark);
+  }
 
-  d = (r2 - d) / r2;
-  d = d < 0 ? 0 : d;
-  var weight = 0.2 * d * alignment;
-  return toMark.multiplyScalar(weight);
+
+  var totalVelocity = new THREE.Vector3(0, 0, 0);
+  if (totalWeight == 0.0) {
+    return;
+  }
+
+  for (var i = 0; i < weights.length; i++) {
+    displacements[i].multiplyScalar(weights[i] / totalWeight);
+    totalVelocity.add(displacements[i]);
+  }
+
+  // clamp maximum to max radial influence
+  if (totalVelocity.length() > settings.agentRadius) {
+    totalVelocity = totalVelocity.normalize().multiplyScalar(settings.agentRadius);
+  }
+  
+  agent.velocity = totalVelocity;
 }
 
 function updateSimulation(dt) {
   
-  // clear all velocities
+  // clear all velocities and ownership
   for (var a = 0; a < agents.length; a++) {
     agents[a].velocity = new THREE.Vector3(0, 0, 0);
+    agents[a].markers = [];
   }
   for (var m = 0; m < markers.length; m++) {
     markers[m].agent = null;
@@ -162,23 +185,20 @@ function updateSimulation(dt) {
   // list of active markers for this iteration
   var activeMarkers = [];
   var gridRadius = Math.round(settings.agentRadius * settings.gridResolution / 10.0);
-  //gridRadius = 1;
-  //console.log(gridRadius);
+
   for (var a = 0; a < agents.length; a++) {
     var g = coordToGrid(agents[a].position.x, agents[a].position.z);
-    //console.log(g);
+
     for (var rx = -gridRadius; rx <= gridRadius; rx++) {
       for (var ry = -gridRadius; ry <= gridRadius; ry++) {
         if (rx + g.x < 0 || rx + g.x >= settings.gridResolution) continue;
         if (ry + g.y < 0 || ry + g.y >= settings.gridResolution) continue;
         var sq = grid[g.x + rx][g.y + ry];
-        //console.log(sq);
+
         for (var i = 0; i < sq.markers.length; i++) {
-          //console.log("heck");
           if (sq.markers[i].agent == null) {
             sq.markers[i].agent = agents[a];
             activeMarkers.push(sq.markers[i]);
-            //console.log("bork");
           } else {
             var currDist = sq.markers[i].pos.distanceToSquared(sq.markers[i].agent.position);
             var newDist = sq.markers[i].pos.distanceToSquared(agents[a].position);
@@ -189,11 +209,10 @@ function updateSimulation(dt) {
     }
   } 
 
-  //console.log(activeMarkers.length);
+  // add all active markers to lists
   for (var am = 0; am < activeMarkers.length; am++) {
     var ag = activeMarkers[am].agent;
-
-    ag.velocity.add(getWeightedVel(ag.position, activeMarkers[am].pos, ag.target));
+    ag.markers.push(activeMarkers[am]);
   }
 
   var min = new THREE.Vector3(-4.99, -5, -4.99);
@@ -201,6 +220,10 @@ function updateSimulation(dt) {
   
   // update all positions
   for (var a = 0; a < agents.length; a++) {
+
+    // find velocity
+    setWeightedVel(agents[a]);
+
     if (agents[a].velocity.length > settings.agentRadius) {
       agents[a].velocity = agents[a].velocity.normalize().multiplyScalar(settings.agentRadius);
     }
@@ -214,11 +237,11 @@ function updateSimulation(dt) {
       grid[i][j].agents = [];
     } 
   }
+
   // update cell agents
   for (var a = 0; a < agents.length; a++) {
     var g = coordToGrid(agents[a].position.x, agents[a].position.z);
     grid[g.x][g.y].agents.push(agents[a]);
-    //console.log(g.x + ", " + g.y)
   } 
 }
 
@@ -242,7 +265,7 @@ function onLoad(framework) {
   var planeGeo = new THREE.PlaneGeometry(10, 10, 20, 20);
   var planeMat = new THREE.MeshPhongMaterial( {
     side: THREE.DoubleSide,
-    color: 0xaaaaaa
+    color: 0xdddddd
   });
   planeGeo.applyMatrix( new THREE.Matrix4().makeRotationX(-Math.PI / 2.0));
 
@@ -251,14 +274,12 @@ function onLoad(framework) {
 
   // initialize sumulation data
   generateGrid();
-  console.log(grid);
-  generateAgentsRows(scene);
-
+  generateAgents(scene);
 
   var marks = new THREE.Geometry();
   var marksMat = new THREE.PointsMaterial({
-    color: 0xFFFFFF,
-    size: 0.1
+    color: 0xaaddff,
+    size: 0.01
   });
   for (var i = 0; i < settings.gridResolution; i++) {
     for (var j = 0; j < settings.gridResolution; j++) {
