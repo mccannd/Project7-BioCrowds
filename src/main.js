@@ -87,8 +87,8 @@ function generateAgents(scene) {
 
   for (var i = 0; i < settings.numAgents; i++) {
     var theta = Math.PI * 2 * i / settings.numAgents;
-    var p = (new THREE.Vector3(Math.cos(theta), 0.1, Math.sin(theta))).multiplyScalar(4.5);
-    var t = (new THREE.Vector3(Math.cos(theta + Math.PI), 0.1, Math.sin(theta + Math.PI))).multiplyScalar(4.5);
+    var p = (new THREE.Vector3(Math.cos(theta), 0.01, Math.sin(theta))).multiplyScalar(4.5);
+    var t = (new THREE.Vector3(Math.cos(theta + Math.PI), 0.01, Math.sin(theta + Math.PI))).multiplyScalar(4.5);
     var cell = coordToGrid(p.x, p.z);
 
     var agent = new Agent(p, new THREE.Vector3(0,0,0), t);
@@ -113,8 +113,8 @@ function generateAgentsRows(scene) {
   for (var i = 0; i < settings.numAgents; i++) {
     var sign = i % 2 == 0;
     var s = sign?1:-1;
-    var p = new THREE.Vector3(i / settings.numAgents * 9 - 4.5, 0.1, s * -4.5);
-    var t = new THREE.Vector3(i / settings.numAgents * 9 - 4.5, 0.1, s * 4.5); 
+    var p = new THREE.Vector3(i / settings.numAgents * 9 - 4.5, 0.01, s * -4.5);
+    var t = new THREE.Vector3(i / settings.numAgents * 9 - 4.5, 0.01, s * 4.5); 
     var cell = coordToGrid(p.x, p.z);
 
     var agent = new Agent(p, new THREE.Vector3(0,0,0), t);
@@ -133,6 +133,7 @@ function setWeightedVel(agent) {
   var pos = agent.position;
   var tgt = agent.target;
   var toTarget = (new THREE.Vector3(0, 0, 0)).subVectors(tgt, pos);
+  toTarget.y = 0;
   if (toTarget.length() < 0.01) {
     return;
   }
@@ -141,9 +142,11 @@ function setWeightedVel(agent) {
   var totalWeight = 0.0;
   var weights = [];
   var displacements = [];
+
   for (var m = 0; m < agent.markers.length; m++) {
     var mpos = agent.markers[m].pos;
     var toMark = (new THREE.Vector3(0, 0, 0)).subVectors(mpos, pos);
+    toMark.y = 0.0;
     var wf = 1.0 / (1.0 + toMark.length());
     
     wf = wf * (1.0 + toMark.dot(toTarget) / toMark.length() / toTarget.length());
@@ -292,6 +295,13 @@ function onLoad(framework) {
   var mMesh = new THREE.Points(marks, marksMat);
   mMesh.name = "markers";
   scene.add(mMesh);
+
+  var obj = { CircleScenario:function(){ generateAgents(scene)},
+            RowsScenario:function(){ generateAgentsRows(scene)}};
+
+  gui.add(obj,'CircleScenario');
+  gui.add(obj,'RowsScenario');
+  gui.add(settings, 'numAgents', 10, 50);
   
 }
 
@@ -303,14 +313,11 @@ function onUpdate(framework) {
     updateSimulation(dt);
     framework.scene.traverse(function(object) {
       if (object instanceof THREE.Mesh) {
-
         if ('agentID' in object.userData) {
-          //console.log('ech');
           var a = agents[object.userData.agentID];
           object.position.set(a.position.x, a.position.y, a.position.z);
         }
       }
-
     });
   }
 
